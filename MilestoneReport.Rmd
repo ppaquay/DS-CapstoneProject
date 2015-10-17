@@ -1,0 +1,295 @@
+Coursera Data Science Capstone : Milestone Report
+==================================================
+
+*Pierre Paquay*
+
+*16/11/2014*
+
+# Synopsis
+
+This report consists in an exploratory analysis of text data from a corpora obtained from HC Corpora. The corpora of interest contains 3 text documents ("en_US.blogs.txt", "en_US.blogs.txt" and "en_US.twitter.txt") collected from three different sources (Twitter feed, news feed and a blog). The aim of this report is to provide a basic understanding of the distribution of words, of the relationship between the words and of the variation in the frequencies of words, word pairs and word triples in the corpora. As this report is intended for a non-technical audience, we don't provide any code in this report, but any reader interested in reproducibility may find the entire R code to generate this report on [GitHub](https://github.com/ppaquay/Capstone/blob/master/MilestoneReport.Rmd).
+
+# 1. Data processing
+
+```{r message = FALSE, echo = FALSE}
+options(java.parameters = "-Xmx8000m")
+
+library(tm)
+library(qdap)
+library(RWeka)
+library(wordcloud)
+library(stringr)
+library(ggplot2)
+library(gridExtra)
+```
+
+```{r set-options, echo = FALSE}
+options(mc.cores = 1)
+options(width = 120)
+```
+
+## 1.1 Summary of corpora
+
+We begin our analysis by providing a count of the number of lines and of words in the three text files.
+
+```{r warning = FALSE, echo = FALSE}
+corpus.blogs <- readLines("final/en_US//en_US.blogs.txt")
+numlines.blogs <- length(corpus.blogs)
+numwords.blogs <- sum(unlist(sapply(corpus.blogs, str_count, pattern = " "))) + numlines.blogs
+corpus.news <- readLines("final/en_US//en_US.news.txt")
+numlines.news <- length(corpus.news)
+numwords.news <- sum(unlist(sapply(corpus.news, str_count, pattern = " "))) + numlines.news
+corpus.twitter <- readLines("final/en_US//en_US.twitter.txt")
+numlines.twitter <- length(corpus.twitter)
+numwords.twitter <- sum(unlist(sapply(corpus.twitter, str_count, pattern = " "))) + numlines.twitter
+```
+
+```{r echo = FALSE}
+df1 <- data.frame(file = factor(c("blogs", "news", "twitter")), count = c(numlines.blogs, numlines.news, numlines.twitter))
+df2 <- data.frame(file = factor(c("blogs", "news", "twitter")), count = c(numwords.blogs, numwords.news, numwords.twitter))
+df <- data.frame(File = factor(c("Blogs", "News", "Twitter")), Count_of_lines = c(numlines.blogs, numlines.news, numlines.twitter), Count_of_words = c(numwords.blogs, numwords.news, numwords.twitter))
+df
+```
+
+To allow for a better visualisation of these basic statistics, we provide a plot of the number of lines and of words in the three text files.
+
+```{r echo = FALSE}
+plot1 <- ggplot(data = df1, aes(x = file, y = count)) + geom_bar(stat = "identity") + xlab("Text files") + ylab("Number of lines")
+plot2 <- ggplot(data = df2, aes(x = file, y = count)) + geom_bar(stat = "identity") + xlab("Text files") + ylab("Number of words")
+grid.arrange(plot1, plot2, ncol = 2)
+```
+
+We may conclude that, as expected, the words/line ratio is the highest for "en_US.blogs.txt", slightly lower for "en_US.news.txt" and the lowest for "en_US.twitter.txt". More accurately, the mean of the line lengths for "en_US.blogs.txt" is `r round(mean(sapply(corpus.blogs, str_length)), 2)`, the mean of the line lengths for "en_US.news.txt" is `r round(mean(sapply(corpus.news, str_length)), 2)` and the mean of the line lengths for "en_US.twitter.txt" is `r round(mean(sapply(corpus.twitter, str_length)), 2)`.  We may note that, on average, the line length in the "en_US.twitter.txt" file is much shorter than in the two other files. This is due to the number of characters limitation fixed by Twitter.
+
+## 1.2 Data cleaning and preprocessing
+
+As the file sizes are pretty large, a sample of 10% of the files has been selected to avoid performance issues. This text corpora was then processed in 6 steps.
+
+- Step 1 : Replace the most frequent abbreviations with their equivalent without dot (for example "a.m." is replaced by "am").
+- Step 2 : Replace email adresses and URLs with their equivalent domain name (for example "www.amazon.com" is replaced by "amazon").
+- Step 3 : Replace every sentence breaking ponctuation marks by a dot mark (for example the characters ":", "?", "!" and "|" are replaced by ".").
+- Step 4 : Remove quotes, quotation, dashes and other non-sentence breaking ponctuation marks.
+- Step 5 : Split sentences according to the dot mark.
+- Step 6 : Remove special characters, convert all characters to lower case (except the "I"'s), strip whitespaces and remove duplicate sentences.
+
+To illustrate this process, we apply these 6 steps to the sentence below.
+
+```{r echo = FALSE}
+"In the Buckeye district, Superintendent Dennis Honkala said: \"We're pretty frustrated and disappointed. We haven't passed anything in 16 years. I can't explain it. I don't understand.\""
+```
+
+We then obtain the processed sentences below.
+
+```{r echo = FALSE}
+c("in the buckeye district superintendent dennis honkala said", 
+"we're pretty frustrated and disappointed", "we haven't passed anything in 16 years", "I can't explain it", "I don't understand")
+```
+
+# 2. N-grams tokenization
+
+## 2.1 Unigrams tokenization
+
+Now, we take a look at the distribution of unigrams (words) frequencies. To proceed, we use our cleaned corpora.
+
+```{r echo = FALSE}
+setwd("~/Docs/Coursera/Capstone Project/Capstone/final/en_US/sample/")
+dir.source <- DirSource("clean/", encoding = "UTF-8")
+corpus.clean <- Corpus(dir.source, readerControl = list(reader = readPlain))
+#my.stopwords <- stopwords("english")[-c(1, 5, 9, 14, 18, 25)]
+#corpus.clean.nostopw <- tm_map(corpus.clean, content_transformer(removeWords), my.stopwords)
+#corpus.clean.nostopw <- tm_map(corpus.clean.nostopw, content_transformer(removeWords), c("i", "you", "he", "she", "we", "they", "'s"))
+```
+
+Next, we use a custom function to tokenize the unigrams in the corpora.
+
+```{r echo = FALSE}
+OnegramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1, delimiters = " \\r\\n\\t.,;:\"()?!|"))
+onegrams <- tm_map(corpus.clean, content_transformer(OnegramTokenizer))
+```
+
+Then, we build the term document matrix of the unigrams which is a matrix with each corpus as column and each unigram as row that contains the frequencies of the unigrams.
+
+```{r echo = FALSE}
+TDM.onegrams <- TermDocumentMatrix(corpus.clean, control = list(tokenize = OnegramTokenizer, wordLengths = c(0, Inf)))
+```
+
+We use this term document matrix to build a table with the 20 most frequent unigrams for each corpus.
+
+```{r echo = FALSE}
+freq.onegrams <- cbind(names(sort(as.matrix(TDM.onegrams)[, 1], decreasing = TRUE)), sort(as.matrix(TDM.onegrams)[, 1], decreasing = TRUE), names(sort(as.matrix(TDM.onegrams)[, 2], decreasing = TRUE)), sort(as.matrix(TDM.onegrams)[, 2], decreasing = TRUE), names(sort(as.matrix(TDM.onegrams)[, 3], decreasing = TRUE)), sort(as.matrix(TDM.onegrams)[, 3], decreasing = TRUE))
+row.names(freq.onegrams) <- 1:nrow(freq.onegrams)
+colnames(freq.onegrams) <- (c("Blogs-1gram", "Freq", "News-1gram", "Freq", "Twitter-1gram", "Freq"))
+freq.onegrams[1:20, ]
+```
+
+For an easier visualisation of these frequencies we may also use a barplot to plot the 50 most frequent unigrams.
+
+```{r fig.width = 12, echo = FALSE}
+df.onegrams1 <- data.frame(term = freq.onegrams[1:50, 1], freq = as.numeric(freq.onegrams[1:50, 2]))
+ggplot(df.onegrams1, aes(x = term, y = freq)) + geom_bar(stat = "identity") + xlab("Unigrams (Blogs)") + ylab("Count") + theme(axis.text.x=element_text(angle=45, hjust=1))
+df.onegrams2 <- data.frame(term = freq.onegrams[1:50, 3], freq = as.numeric(freq.onegrams[1:50, 4]))
+ggplot(df.onegrams2, aes(x = term, y = freq)) + geom_bar(stat = "identity") + xlab("Unigrams (News)") + ylab("Count") + theme(axis.text.x=element_text(angle=45, hjust=1))
+df.onegrams3 <- data.frame(term = freq.onegrams[1:50, 5], freq = as.numeric(freq.onegrams[1:50, 6]))
+ggplot(df.onegrams3, aes(x = term, y = freq)) + geom_bar(stat = "identity") + xlab("Unigrams (Twitter)") + ylab("Count") + theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+Another way of plotting these frequencies consists in using wordclouds.
+
+```{r fig.width = 12, echo = FALSE}
+par(mfrow = c(1, 3))
+wordcloud(words = freq.onegrams[, 1], freq = as.numeric(freq.onegrams[, 2]), max.words = 200, random.order = FALSE, colors = brewer.pal(6, "Dark2"), scale = c(7, 0.7))
+wordcloud(words = freq.onegrams[, 3], freq = as.numeric(freq.onegrams[, 4]), max.words = 200, random.order = FALSE, colors = brewer.pal(6, "Dark2"), scale = c(7, 0.7))
+wordcloud(words = freq.onegrams[, 5], freq = as.numeric(freq.onegrams[, 6]), max.words = 200, random.order = FALSE, colors = brewer.pal(6, "Dark2"), scale = c(7, 0.7))
+```
+
+## 2.2 Bigrams tokenization
+
+Next, we take a look at the distribution of bigrams frequencies. We use again our entire cleaned corpora and our custom function to tokenize the bigrams in the corpora.
+
+```{r echo = FALSE}
+TwogramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2, delimiters = " \\r\\n\\t.,;:\"()?!|"))
+twograms <- tm_map(corpus.clean, content_transformer(TwogramTokenizer))
+```
+
+Then, we build the term document matrix of the bigrams which is a matrix with each corpus as column and each bigram as row that contains the frequencies of the bigrams.
+
+```{r echo = FALSE}
+TDM.twograms <- TermDocumentMatrix(corpus.clean, control = list(tokenize = TwogramTokenizer))
+```
+
+We use this term document matrix to build a table with the 20 most frequent bigrams for each corpus.
+
+```{r echo = FALSE}
+freq.twograms <- cbind(names(sort(as.matrix(TDM.twograms)[, 1], decreasing = TRUE)), sort(as.matrix(TDM.twograms)[, 1], decreasing = TRUE), names(sort(as.matrix(TDM.twograms)[, 2], decreasing = TRUE)), sort(as.matrix(TDM.twograms)[, 2], decreasing = TRUE), names(sort(as.matrix(TDM.twograms)[, 3], decreasing = TRUE)), sort(as.matrix(TDM.twograms)[, 3], decreasing = TRUE))
+row.names(freq.twograms) <- 1:nrow(freq.twograms)
+colnames(freq.twograms) <- (c("Blogs-2gram", "Freq", "News-2gram", "Freq", "Twitter-2gram", "Freq"))
+freq.twograms[1:20, ]
+```
+
+For an easier visualisation of these frequencies we may also use a barplot to plot the 50 most frequent bigrams.
+
+```{r fig.width = 12, echo = FALSE}
+df.twograms1 <- data.frame(term = freq.twograms[1:50, 1], freq = as.numeric(freq.twograms[1:50, 2]))
+ggplot(df.twograms1, aes(x = term, y = freq)) + geom_bar(stat = "identity") + xlab("Bigrams (Blogs)") + ylab("Count") + theme(axis.text.x=element_text(angle=45, hjust=1))
+df.twograms2 <- data.frame(term = freq.twograms[1:50, 3], freq = as.numeric(freq.twograms[1:50, 4]))
+ggplot(df.twograms2, aes(x = term, y = freq)) + geom_bar(stat = "identity") + xlab("Bigrams (News)") + ylab("Count") + theme(axis.text.x=element_text(angle=45, hjust=1))
+df.twograms3 <- data.frame(term = freq.twograms[1:50, 5], freq = as.numeric(freq.twograms[1:50, 6]))
+ggplot(df.twograms3, aes(x = term, y = freq)) + geom_bar(stat = "identity") + xlab("Bigrams (Twitter)") + ylab("Count") + theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+Here again, we may also use wordclouds.
+
+```{r fig.width = 12, echo = FALSE}
+par(mfrow = c(1, 3))
+wordcloud(words = freq.twograms[, 1], freq = as.numeric(freq.twograms[, 2]), max.words = 200, random.order = FALSE, colors = brewer.pal(6, "Dark2"), scale = c(5, 0.5))
+wordcloud(words = freq.twograms[, 3], freq = as.numeric(freq.twograms[, 4]), max.words = 200, random.order = FALSE, colors = brewer.pal(6, "Dark2"), scale = c(5, 0.5))
+wordcloud(words = freq.twograms[, 5], freq = as.numeric(freq.twograms[, 6]), max.words = 200, random.order = FALSE, colors = brewer.pal(6, "Dark2"), scale = c(4, 0.4))
+```
+
+## 2.3 Trigrams tokenization
+
+Next, we take a look at the distribution of trigrams frequencies. We use once again our cleaned corpora and our custom function to tokenize the trigrams in the corpora.
+
+```{r echo = FALSE}
+ThreegramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3, delimiters = " \\r\\n\\t.,;:\"()?!|"))
+threegrams <- tm_map(corpus.clean, content_transformer(ThreegramTokenizer))
+```
+
+Then, we will build the term document matrix of the bigrams which is a matrix with each corpus as column and each trigram as row that contains the frequencies of the trigrams.
+
+```{r echo = FALSE}
+TDM.threegrams <- TermDocumentMatrix(corpus.clean, control = list(tokenize = ThreegramTokenizer))
+```
+
+We use one more time this term document matrix to build a table with the 20 most frequent trigrams for each corpus.
+
+```{r echo = FALSE}
+freq.threegrams <- cbind(names(sort(as.matrix(TDM.threegrams)[, 1], decreasing = TRUE)), sort(as.matrix(TDM.threegrams)[, 1], decreasing = TRUE), names(sort(as.matrix(TDM.threegrams)[, 2], decreasing = TRUE)), sort(as.matrix(TDM.threegrams)[, 2], decreasing = TRUE), names(sort(as.matrix(TDM.threegrams)[, 3], decreasing = TRUE)), sort(as.matrix(TDM.threegrams)[, 3], decreasing = TRUE))
+row.names(freq.threegrams) <- 1:nrow(freq.threegrams)
+colnames(freq.threegrams) <- (c("Blogs-3gram", "Freq", "News-3gram", "Freq", "Twitter-3gram", "Freq"))
+freq.threegrams[1:20, ]
+```
+
+For an easier visualisation of these frequencies we may also use a barplot to plot the 50 most frequent trigrams.
+
+```{r fig.width = 12, echo = FALSE}
+df.threegrams1 <- data.frame(term = freq.threegrams[1:50, 1], freq = as.numeric(freq.threegrams[1:50, 2]))
+ggplot(df.threegrams1, aes(x = term, y = freq)) + geom_bar(stat = "identity") + xlab("Trigrams (Blogs)") + ylab("Count") + theme(axis.text.x=element_text(angle=45, hjust=1))
+df.threegrams2 <- data.frame(term = freq.threegrams[1:50, 3], freq = as.numeric(freq.threegrams[1:50, 4]))
+ggplot(df.threegrams2, aes(x = term, y = freq)) + geom_bar(stat = "identity") + xlab("Trigrams (News)") + ylab("Count") + theme(axis.text.x=element_text(angle=45, hjust=1))
+df.threegrams3 <- data.frame(term = freq.threegrams[1:50, 5], freq = as.numeric(freq.threegrams[1:50, 6]))
+ggplot(df.threegrams3, aes(x = term, y = freq)) + geom_bar(stat = "identity") + xlab("Trigrams (Twitter)") + ylab("Count") + theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+Here again, we may use wordclouds.
+
+```{r fig.width = 12, echo = FALSE}
+par(mfrow = c(1, 3))
+wordcloud(words = freq.threegrams[, 1], freq = as.numeric(freq.threegrams[, 2]), max.words = 100, random.order = FALSE, colors = brewer.pal(6, "Dark2"), scale = c(4, 0.4))
+wordcloud(words = freq.threegrams[, 3], freq = as.numeric(freq.threegrams[, 4]), max.words = 100, random.order = FALSE, colors = brewer.pal(6, "Dark2"), scale = c(4, 0.4))
+wordcloud(words = freq.threegrams[, 5], freq = as.numeric(freq.threegrams[, 6]), max.words = 75, random.order = FALSE, colors = brewer.pal(6, "Dark2"), scale = c(4, 0.4))
+```
+
+# 3. Unique words needed to cover a percentage of all word instances
+
+To compute how many words we need to cover a precise percentage of all word instances, we have to use some custom functions. In this section we use the three corpora as one big corpora.
+
+```{r echo = FALSE}
+freq.onegrams <- sort(rowSums(as.matrix(TDM.onegrams)), decreasing = TRUE)
+
+coverInstance <- function(freq, threshold) {
+    # This function takes as input a vector of word frequencies
+    # and a percentage threshold of word instances
+    
+    # This function returns the number of words needed to cover
+    # this percentage
+    
+    tot <- sum(freq)
+    for (i in 1:tot) {
+        s <- sum(freq[1:i])
+        if (s >= (threshold / 100 * tot))
+            break
+    }
+    return(i)
+}
+
+coverPercentage <- function(freq, vec) {
+    # This function takes as input a vector of word frequencies
+    # and a vector containing numbers of unique words
+    
+    # This function returns a vector of percentage of word
+    # instances covered by this number of word
+    
+    perc <- rep(0, length(vec))
+    tot <- sum(freq)
+    for (i in vec) {
+        perc[i] <- freq[i] / tot * 100
+    }
+    return(cumsum(perc))
+}
+```
+
+Using a custom function that takes as input word frequencies and a percentage threshold of word instances and returns the number of words needed to cover this percentage, we may affirm that only `r coverInstance(freq.onegrams, 50)` (resp. `r coverInstance(freq.onegrams, 90)`) most frequent words are needed to cover 50% (resp. 90%) of all word instances.
+
+We may also use another custom function that takes as input word frequencies and numbers of unique words and returns a vector of percentage of word instances covered by this number of words to plot the percentage of text covered vs. the number of unique words.
+
+```{r echo = FALSE}
+df <- data.frame(words = 1:50000, perc = coverPercentage(freq.onegrams, 1:50000))
+ggplot(df, aes(x = words, y = perc)) + geom_line() + xlab("Number of unique words") + ylab("Percentage of word instances covered")
+```
+
+# 4. Zipf's law
+
+The Zipf's law is an empirical law that states that given some corpus of natural language, the frequency of any word is inversely proportional to its rank in the frequency table. This means that the most frequent word will occur approximately twice as often as the second most frequent word, three times as often as the third most frequent word, and so on. To see if our corpora fits this law well, we plot the frequency of each word vs. the frequency of frequency of words in log-log coordinates.
+
+```{r echo = FALSE}
+df <- data.frame(term = as.numeric(names(table(freq.onegrams))), freq = as.vector(table(freq.onegrams)))
+ggplot(df, aes(x = log(term), y = log(freq))) + layer(geom = "point") + xlab("Frequency of words (Log)") + ylab("Frequency of frequency of words (Log)")
+```
+
+We may see that, as the Zipf's law states, there are many words that occur infrequently and there are few words that appear very frequently.
+
+# 5. Conclusion
+
+Following this exploratory data analysis, we plan to build a predictive model based on the n-gram language model with the Markov assumption. The algorithms we will use are the Simple Good-Turing method and Kneser-Ney method with the Katz backoff.
+
